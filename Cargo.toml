@@ -1,0 +1,15 @@
+[package]
+name = "tracerust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-http = "3.9.0"
+actix-web = "4.9.0"
+bytes-utils = "0.1.4"
+futures-util = "0.3.30"
+opentelemetry = "0.24.0"
+opentelemetry-otlp = "0.17.0"
+opentelemetry-stdout = "0.5.0"
+opentelemetry_sdk = { version = "0.24.0", features = ["rt-tokio"] }
+serde_json = "1.0.125"
