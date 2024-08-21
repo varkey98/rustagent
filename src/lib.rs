@@ -52,12 +52,12 @@ pub fn init_tracer() {
     // global::set_tracer_provider(provider);
 }
 
-pub struct TraceRustMiddleware<S> {
+pub struct RustAgentMiddleware<S> {
     service: Rc<RefCell<S>>,
 }
 
 
-impl<S> Service<ServiceRequest> for TraceRustMiddleware<S>
+impl<S> Service<ServiceRequest> for RustAgentMiddleware<S>
 where
     S: Service<ServiceRequest, Response = ServiceResponse<BoxBody>, Error = Error> + 'static,
     S::Future: 'static,
@@ -173,10 +173,10 @@ where
 
 }
 
-pub struct TraceRust;
+pub struct RustAgent;
 
 // `B` - type of response's body
-impl<S: 'static> Transform<S, ServiceRequest> for TraceRust
+impl<S: 'static> Transform<S, ServiceRequest> for RustAgent
 where
     S: Service<ServiceRequest, Response = ServiceResponse<BoxBody>, Error = Error>,
     S::Future: 'static,
@@ -185,11 +185,11 @@ where
     type Response = ServiceResponse<BoxBody>;
     type Error = Error;
     type InitError = ();
-    type Transform = TraceRustMiddleware<S>;
+    type Transform = RustAgentMiddleware<S>;
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ready(Ok(TraceRustMiddleware { service: Rc::new(RefCell::new(service)) }))
+        ready(Ok(RustAgentMiddleware { service: Rc::new(RefCell::new(service)) }))
     }
 }
 
@@ -213,10 +213,6 @@ fn populate_headers(span: &mut BoxedSpan, headers: &HeaderMap, prefix: &str, clo
             key: attr_key.into(),
             value: attr_value.into(),
         });
-
-        // if (clone_response.is_some()) {
-        //     clone_response.as_mut().unwrap().headers_mut().append(val.0.clone(), val.1.clone());
-        // }
     }
 
 }
