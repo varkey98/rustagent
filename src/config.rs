@@ -2,19 +2,20 @@ use std::env;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
+    pub service_name: Option<String>,
     pub exporter: Option<Exporter>,
     pub allowed_content_types: Option<Vec<String>>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Exporter {
     pub endpoint: Option<String>,
     pub trace_reporter_type: Option<TraceReporterType>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum TraceReporterType {
     Otlp,
     Logging,
@@ -48,6 +49,7 @@ pub fn load() -> Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
+            service_name: Some(String::from("rustagent")),
             exporter: Some(Exporter {
                 endpoint: Some(String::from("localhost:4317")),
                 trace_reporter_type: Some(TraceReporterType::Otlp),

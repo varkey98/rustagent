@@ -34,62 +34,64 @@ mod config;
 mod semantic_conventions;
 
 pub fn init_tracer() {
-    config::load();
+    let cfg = config::load();
+    println!("loading agent with config: {:?}", cfg);
+
     global::set_text_map_propagator(TraceContextPropagator::new());
 
-    let provider = opentelemetry_otlp::new_pipeline()
-        .tracing()
-        .with_exporter(
-            opentelemetry_otlp::new_exporter()
-                .tonic()
-                .with_endpoint("http://35.233.243.10:4317")
-                .with_timeout(Duration::from_secs(3)),
-        )
-        .with_trace_config(
-            Config::default()
-                .with_sampler(Sampler::AlwaysOn)
-                .with_id_generator(trace::RandomIdGenerator::default())
-                .with_max_events_per_span(64)
-                .with_max_attributes_per_span(64)
-                .with_max_events_per_span(64)
-                .with_resource(Resource::new(vec![KeyValue::new(
-                    "service.name",
-                    "jacob-test",
-                )])),
-        )
-        .install_batch(opentelemetry_sdk::runtime::Tokio);
+    let exporter_cfg = cfg.exporter.clone().unwrap();
+    let provider = match exporter_cfg.trace_reporter_type.unwrap() {
+        config::TraceReporterType::Otlp => opentelemetry_otlp::new_pipeline()
+            .tracing()
+            .with_exporter(
+                opentelemetry_otlp::new_exporter()
+                    .tonic()
+                    .with_endpoint(exporter_cfg.endpoint.unwrap())
+                    .with_timeout(Duration::from_secs(10)),
+            )
+            .with_trace_config(
+                Config::default()
+                    .with_sampler(Sampler::AlwaysOn)
+                    .with_id_generator(trace::RandomIdGenerator::default())
+                    .with_max_events_per_span(64)
+                    .with_max_attributes_per_span(64)
+                    .with_max_events_per_span(64)
+                    .with_resource(Resource::new(vec![KeyValue::new(
+                        "service.name",
+                        cfg.service_name.unwrap(),
+                    )])),
+            )
+            .install_batch(opentelemetry_sdk::runtime::Tokio)
+            .unwrap(),
+        config::TraceReporterType::Logging => TracerProvider::builder()
+            .with_batch_exporter(
+                SpanExporterBuilder::default()
+                    .with_encoder(|writer, data| {
+                        serde_json::to_writer_pretty(writer, &data).unwrap();
+                        Ok(())
+                    })
+                    .build(),
+                Tokio,
+            )
+            .build(),
+    };
 
-    global::set_tracer_provider(provider.expect("could not initialise tracer provider"));
-    // let provider = TracerProvider::builder()
-    //     .with_batch_exporter(
-    //         SpanExporterBuilder::default()
-    //             .with_encoder(|writer, data| {
-    //                 serde_json::to_writer_pretty(writer, &data).unwrap();
-    //                 Ok(())
-    //             })
-    //             .build(),
-    //         Tokio,
-    //     )
-    //     .build();
-
-    // global::set_tracer_provider(provider);
+    global::set_tracer_provider(provider);
 }
 
 pub struct RustAgentMiddleware<S> {
     service: Rc<RefCell<S>>,
+    config: config::Config,
 }
 
 impl<S> Service<ServiceRequest> for RustAgentMiddleware<S>
 where
     S: Service<ServiceRequest, Response = ServiceResponse<BoxBody>, Error = Error> + 'static,
     S::Future: 'static,
-    // B: 'static + actix_web::body::BoxBody,
 {
     type Response = ServiceResponse<BoxBody>;
     type Error = Error;
     type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    // forward_ready!(service);
 
     fn call(&self, mut req: ServiceRequest) -> Self::Future {
         let svc = self.service.clone();
@@ -97,7 +99,7 @@ where
         let method = req.method().to_string();
         let tracer = global::tracer("actix");
         let mut span = tracer
-            .span_builder(method)
+            .span_builder(method.clone())
             .with_kind(SpanKind::Server)
             .start(&tracer);
 
@@ -118,16 +120,23 @@ where
             .into(),
         });
 
-        // span.set_attribute(KeyValue{
-        //     key: semantic_conventions::HTTP_SCHEME.into(),
-        //     value: String::from(uri.scheme_str().expect("scheme is empty")).into()
-        // });
+        span.set_attribute(KeyValue {
+            key: semantic_conventions::HTTP_METHOD.into(),
+            value: method.clone().into(),
+        });
+
+        match uri.scheme_str() {
+            Some(scheme) => span.set_attribute(KeyValue {
+                key: semantic_conventions::HTTP_SCHEME.into(),
+                value: String::from(scheme).into(),
+            }),
+            None => {}
+        }
 
         populate_headers(
             &mut span,
             req.headers(),
             semantic_conventions::HTTP_REQUEST_HEADER_PREFIX,
-            &mut None,
         );
 
         Box::pin(async move {
@@ -146,14 +155,13 @@ where
                     .into(),
             });
 
-            let mut res = svc.call(req).await?;
+            let res = svc.call(req).await?;
             let status = res.status().clone();
 
             populate_headers(
                 &mut span,
                 res.headers(),
                 semantic_conventions::HTTP_RESPONSE_HEADER_PREFIX,
-                &mut None,
             );
             span.set_attribute(KeyValue {
                 key: semantic_conventions::HTTP_STATUS_CODE.into(),
@@ -168,7 +176,7 @@ where
                 },
             };
 
-            let ret = match content_type.to_ascii_lowercase().contains("json") {
+            let ret = match true {
                 false => res,
                 true => {
                     let new_request = res.request().clone();
@@ -209,14 +217,26 @@ where
     }
 }
 
-pub struct RustAgent;
+// impl<S> RustAgentMiddleware<S> {
+//     fn should_capture_content_type(self: &Self, content_type: &str) -> bool {
 
-// `B` - type of response's body
+//         for allowed_type in self.config.allowed_content_types.clone().unwrap().iter() {
+//             if content_type.to_ascii_lowercase().contains(allowed_type) {
+//                 return true;
+//             }
+//         }
+//         false
+//     }
+// }
+
+pub struct RustAgent {
+    pub config: config::Config,
+}
+
 impl<S: 'static> Transform<S, ServiceRequest> for RustAgent
 where
     S: Service<ServiceRequest, Response = ServiceResponse<BoxBody>, Error = Error>,
     S::Future: 'static,
-    // B: 'static + actix_web::body::BoxBody,
 {
     type Response = ServiceResponse<BoxBody>;
     type Error = Error;
@@ -227,16 +247,20 @@ where
     fn new_transform(&self, service: S) -> Self::Future {
         ready(Ok(RustAgentMiddleware {
             service: Rc::new(RefCell::new(service)),
+            config: self.config.clone(),
         }))
     }
 }
 
-fn populate_headers(
-    span: &mut BoxedSpan,
-    headers: &HeaderMap,
-    prefix: &str,
-    clone_response: &mut Option<HttpResponse>,
-) {
+impl Default for RustAgent {
+    fn default() -> Self {
+        Self {
+            config: config::load(),
+        }
+    }
+}
+
+fn populate_headers(span: &mut BoxedSpan, headers: &HeaderMap, prefix: &str) {
     let mut itr = headers.iter();
 
     loop {
