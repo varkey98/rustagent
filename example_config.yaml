@@ -1,0 +1,6 @@
+allowed_content_types: 
+  - json
+  - xml
+exporter:
+  endpoint: localhost:4318
+  trace_reporter_type: OTLP

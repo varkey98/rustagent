@@ -13,8 +13,10 @@ use opentelemetry_sdk::{
 use opentelemetry_stdout::SpanExporterBuilder;
 use actix_web::HttpResponseBuilder;
 mod semantic_conventions;
+mod config;
 
 pub fn init_tracer() {
+    config::load();
     global::set_text_map_propagator(TraceContextPropagator::new());
 
    let provider = opentelemetry_otlp::new_pipeline()
