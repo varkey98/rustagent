@@ -1,0 +1,23 @@
+name: Build Rustagent
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - prerelease/*.*
+jobs:
+  release:
+    name: PR Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+    
+      - name: Build
+      # https://doc.rust-lang.org/cargo/reference/config.html?highlight=CARGO_REGISTRY_TOKEN#credentials
+        run: >
+          cargo publish
+          --verbose
+          --dry-run
+
