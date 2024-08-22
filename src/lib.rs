@@ -5,13 +5,12 @@ use actix_web::{
     dev::{Service, ServiceRequest, ServiceResponse, Transform},
     http::header::HeaderMap,
     web::BytesMut,
-    Error, HttpMessage, HttpResponse,
+    Error, HttpMessage,
 };
 use core::str;
 use futures_util::{future::LocalBoxFuture, StreamExt};
 use opentelemetry::{
     global::{self, BoxedSpan},
-    propagation::Extractor,
     trace::{Span, SpanKind, Tracer},
     KeyValue,
 };
@@ -57,7 +56,7 @@ pub fn init_tracer() {
                     .with_max_attributes_per_span(64)
                     .with_max_events_per_span(64)
                     .with_resource(Resource::new(vec![KeyValue::new(
-                        "service.name",
+                        opentelemetry_semantic_conventions::resource::SERVICE_NAME,
                         cfg.service_name.unwrap(),
                     )])),
             )
@@ -81,7 +80,6 @@ pub fn init_tracer() {
 
 pub struct RustAgentMiddleware<S> {
     service: Rc<RefCell<S>>,
-    config: config::Config,
 }
 
 impl<S> Service<ServiceRequest> for RustAgentMiddleware<S>
@@ -133,6 +131,21 @@ where
             None => {}
         }
 
+        span.set_attribute(KeyValue {
+            key: semantic_conventions::HTTP_HOST.into(),
+            value: String::from(req.request().full_url().host_str().as_deref().unwrap()).into(),
+        });
+
+        if req.request().full_url().port() != Some(80)
+            && req.request().full_url().port() != Some(443)
+            && req.request().full_url().port() != None
+        {
+            span.set_attribute(KeyValue {
+                key: semantic_conventions::HTTP_PORT.into(),
+                value: String::from(req.request().full_url().port().unwrap().to_string()).into(),
+            });
+        }
+
         populate_headers(
             &mut span,
             req.headers(),
@@ -140,20 +153,34 @@ where
         );
 
         Box::pin(async move {
-            let mut request_body = BytesMut::new();
-            while let Some(chunk) = req.take_payload().next().await {
-                request_body.extend_from_slice(&chunk?);
-            }
+            let req_content_type = match req.borrow().headers().get("content-type") {
+                None => "unknown",
+                Some(header) => match header.to_str() {
+                    Ok(value) => value,
+                    Err(_) => "unknown",
+                },
+            };
+            let capture_req_body =
+                should_capture_content_type(config::get_config(), req_content_type);
+            match capture_req_body {
+                false => {}
+                true => {
+                    let mut request_body = BytesMut::new();
+                    while let Some(chunk) = req.take_payload().next().await {
+                        request_body.extend_from_slice(&chunk?);
+                    }
 
-            let mut orig_payload = Payload::create(true);
-            orig_payload.1.unread_data(request_body.clone().freeze());
-            req.set_payload(actix_http::Payload::from(orig_payload.1));
-            span.set_attribute(KeyValue {
-                key: semantic_conventions::HTTP_REQUEST_BODY.into(),
-                value: String::from_utf8(request_body.to_vec())
-                    .expect("couldn't extract body")
-                    .into(),
-            });
+                    let mut orig_payload = Payload::create(true);
+                    orig_payload.1.unread_data(request_body.clone().freeze());
+                    req.set_payload(actix_http::Payload::from(orig_payload.1));
+                    span.set_attribute(KeyValue {
+                        key: semantic_conventions::HTTP_REQUEST_BODY.into(),
+                        value: String::from_utf8(request_body.to_vec())
+                            .expect("couldn't extract body")
+                            .into(),
+                    });
+                }
+            }
 
             let res = svc.call(req).await?;
             let status = res.status().clone();
@@ -168,7 +195,7 @@ where
                 value: String::from(res.status().as_str()).into(),
             });
 
-            let content_type = match res.borrow().headers().get("content-type") {
+            let res_content_type = match res.borrow().headers().get("content-type") {
                 None => "unknown",
                 Some(header) => match header.to_str() {
                     Ok(value) => value,
@@ -176,7 +203,9 @@ where
                 },
             };
 
-            let ret = match true {
+            let capture_res_body =
+                should_capture_content_type(config::get_config(), res_content_type);
+            let ret = match capture_res_body {
                 false => res,
                 true => {
                     let new_request = res.request().clone();
@@ -217,21 +246,7 @@ where
     }
 }
 
-// impl<S> RustAgentMiddleware<S> {
-//     fn should_capture_content_type(self: &Self, content_type: &str) -> bool {
-
-//         for allowed_type in self.config.allowed_content_types.clone().unwrap().iter() {
-//             if content_type.to_ascii_lowercase().contains(allowed_type) {
-//                 return true;
-//             }
-//         }
-//         false
-//     }
-// }
-
-pub struct RustAgent {
-    pub config: config::Config,
-}
+pub struct RustAgent;
 
 impl<S: 'static> Transform<S, ServiceRequest> for RustAgent
 where
@@ -247,16 +262,13 @@ where
     fn new_transform(&self, service: S) -> Self::Future {
         ready(Ok(RustAgentMiddleware {
             service: Rc::new(RefCell::new(service)),
-            config: self.config.clone(),
         }))
     }
 }
 
 impl Default for RustAgent {
     fn default() -> Self {
-        Self {
-            config: config::load(),
-        }
+        Self {}
     }
 }
 
@@ -281,4 +293,15 @@ fn populate_headers(span: &mut BoxedSpan, headers: &HeaderMap, prefix: &str) {
             value: attr_value.into(),
         });
     }
+}
+
+fn should_capture_content_type(config: &'static config::Config, content_type: &str) -> bool {
+    if let Some(allowed_types) = config.allowed_content_types.clone() {
+        for allowed_type in allowed_types.iter() {
+            if content_type.to_ascii_lowercase().contains(allowed_type) {
+                return true;
+            }
+        }
+    }
+    false
 }

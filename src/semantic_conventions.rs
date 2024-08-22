@@ -8,3 +8,4 @@ pub static HTTP_STATUS_CODE: &str = "http.status_code";
 pub static HTTP_TARGET: &str = "http.target";
 pub static HTTP_SCHEME: &str = "http.scheme";
 pub static HTTP_HOST: &str = "http.host";
+pub static HTTP_PORT: &str = "http.port";

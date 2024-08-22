@@ -1,6 +1,7 @@
-use std::env;
-
 use serde::{Deserialize, Serialize};
+use std::{env, sync::OnceLock};
+
+static CFG: OnceLock<Config> = OnceLock::new();
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
@@ -44,6 +45,10 @@ pub fn load() -> Config {
         Ok(cfg) => cfg,
         Err(_) => Config::default(),
     }
+}
+
+pub fn get_config() -> &'static Config {
+    CFG.get_or_init(|| load())
 }
 
 impl Default for Config {
