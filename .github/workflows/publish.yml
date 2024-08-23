@@ -19,6 +19,7 @@ jobs:
       - name: Replace version number in cargo.toml
         run: sed -i "s|<SERVICE_VERSION>|${{ env.SERVICE_VERSION }}|g" Cargo.toml 
     
+      # Setting the service version from ci wont build because of uncommitted changes to cargo.toml unless `--allow-dirty` flag is passed
       - name: Publish
       # https://doc.rust-lang.org/cargo/reference/config.html?highlight=CARGO_REGISTRY_TOKEN#credentials
         run: >
@@ -26,5 +27,6 @@ jobs:
           --verbose
           --locked
           --no-verify
+          --allow-dirty
           --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 

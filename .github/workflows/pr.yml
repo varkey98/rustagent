@@ -17,9 +17,10 @@ jobs:
       - name: Replace version number in cargo.toml
         run: sed -i "s|<SERVICE_VERSION>|0.1.0|g" Cargo.toml 
 
+      # Setting the service version from ci wont build because of uncommitted changes to cargo.toml unless `--allow-dirty` flag is passed
       - name: Build
         run: >
           cargo publish
           --verbose
           --dry-run
-
+          --allow-dirty
