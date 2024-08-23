@@ -13,7 +13,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-    
+
+      - name: Replace version number in cargo.toml
+        run: sed -i "s|<SERVICE_VERSION>|0.1.0|g" cargo.toml 
+
       - name: Build
         run: >
           cargo publish
