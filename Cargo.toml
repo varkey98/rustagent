@@ -2,6 +2,12 @@
 name = "rustagent"
 version = "0.1.0"
 edition = "2021"
+description = "Opentelemetry Rust extension which captures request/response headers and payloads"
+license = "MIT OR Apache-2.0"
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+]
 
 [dependencies]
 actix-http = "3.9.0"
